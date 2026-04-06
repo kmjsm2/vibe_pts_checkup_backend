@@ -1,0 +1,49 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0f1419;
+  --surface: #1a222d;
+  --surface2: #232d3b;
+  --border: #2f3d4f;
+  --text: #e8eef4;
+  --muted: #8b9cb3;
+  --accent: #3d9cf5;
+  --accent-dim: #2b7fd4;
+  --danger: #e85d6c;
+  --success: #4ecf8a;
+  --radius: 10px;
+  --font: "Noto Sans KR", "DM Sans", system-ui, sans-serif;
+}
+
+html {
+  font-size: 15px;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  background: radial-gradient(1200px 800px at 10% -10%, #1a2a3d 0%, transparent 55%),
+    radial-gradient(900px 600px at 100% 0%, #152028 0%, transparent 50%), var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

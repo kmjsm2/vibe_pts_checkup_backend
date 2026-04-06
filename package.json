@@ -1,0 +1,23 @@
+{
+  "name": "pts-checkup-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PTS checkup backend API",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --import ./loadEnv.js index.js",
+    "dev": "node --watch --import ./loadEnv.js index.js",
+    "client": "npm run dev --prefix client",
+    "client:build": "npm run build --prefix client"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "mongoose": "^9.3.3"
+  }
+}
