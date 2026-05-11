@@ -1,7 +1,7 @@
 // Vite 개발: "" + 프록시. 빌드 후 정적 서빙: 기본 백엔드(환경변수 VITE_API_BASE로 덮어쓰기).
 const BASE =
   import.meta.env.VITE_API_BASE ??
-  (import.meta.env.PROD ? "http://127.0.0.1:5000" : "");
+  (import.meta.env.PROD ? "https://vibe-pts-checkup-backend.onrender.com" : "");
 
 async function parseBody(res) {
   if (res.status === 204) return { data: null, text: "" };
