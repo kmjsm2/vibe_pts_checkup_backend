@@ -3,6 +3,11 @@ import cors from "cors";
 import express from "express";
 import mongoose from "mongoose";
 import "./models/Patient.js";
+import "./models/User.js";
+import { requireAuth } from "./middleware/auth.js";
+import { authRouter } from "./routes/auth.js";
+import { aiRouter } from "./routes/ai.js";
+import { statsRouter } from "./routes/stats.js";
 import {
   patientsRouter,
   sendPatientFacets,
@@ -45,6 +50,9 @@ app.use("/api", (req, res, next) => {
 app.get("/api/patients/facets", sendPatientFacets);
 app.get("/api/patients/db-info", sendPatientsDbInfo);
 app.use("/api/patients", patientsRouter);
+app.use("/api/auth", authRouter);
+app.use("/api/ai", requireAuth, aiRouter);
+app.use("/api/stats", requireAuth, statsRouter);
 
 app.get("/", (_req, res) => {
   res.send("PTS checkup backend");
