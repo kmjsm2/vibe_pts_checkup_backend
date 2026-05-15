@@ -207,3 +207,162 @@ JSON 외 다른 텍스트는 절대 포함하지 마세요.
     });
   }
 });
+
+const COMPARE_SYSTEM_PROMPT =
+  "당신은 영상의학과 전문의 보조 AI입니다. 두 시점의 영상 소견을 비교 분석합니다.";
+
+const COMPARE_STATUS = new Set(["호전", "악화", "유지", "판단불가"]);
+
+function hasAiReportForCompare(img) {
+  const r = img?.aiReport;
+  if (!r || typeof r !== "object") return false;
+  const hasText =
+    (typeof r.findings === "string" && r.findings.trim().length > 0) ||
+    (typeof r.impression === "string" && r.impression.trim().length > 0);
+  return hasText;
+}
+
+function reportSortTime(img) {
+  const d = img.aiReport?.analyzedAt ?? img.uploadedAt;
+  const t = d ? new Date(d).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function formatDateTypeLine(img) {
+  const d = img.aiReport?.analyzedAt ?? img.uploadedAt;
+  const dateStr =
+    d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toISOString().slice(0, 10)
+      : d
+        ? String(d)
+        : "(날짜 없음)";
+  return `${dateStr} / ${img.imageType ?? ""}`;
+}
+
+aiRouter.post("/patients/:id/images/compare", async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ message: "ANTHROPIC_API_KEY가 설정되어 있지 않습니다." });
+  }
+
+  const { id } = req.params;
+  const imageId1 =
+    typeof req.body?.imageId1 === "string" ? req.body.imageId1.trim() : "";
+  const imageId2 =
+    typeof req.body?.imageId2 === "string" ? req.body.imageId2.trim() : "";
+
+  if (!mongoose.isValidObjectId(id)) {
+    return res.status(400).json({ message: "잘못된 환자 ID입니다." });
+  }
+  if (!imageId1 || !imageId2) {
+    return res.status(400).json({ message: "imageId1과 imageId2가 필요합니다." });
+  }
+  if (imageId1 === imageId2) {
+    return res.status(400).json({ message: "서로 다른 두 영상의 imageId를 지정해 주세요." });
+  }
+
+  try {
+    const patient = await Patient.findById(id).select("images").lean();
+    if (!patient) {
+      return res.status(404).json({ message: "환자를 찾을 수 없습니다." });
+    }
+    const images = patient.images ?? [];
+    const img1 = images.find((i) => i.imageId === imageId1);
+    const img2 = images.find((i) => i.imageId === imageId2);
+    if (!img1 || !img2) {
+      return res.status(404).json({ message: "이미지를 찾을 수 없습니다." });
+    }
+    if (!hasAiReportForCompare(img1) || !hasAiReportForCompare(img2)) {
+      return res.status(400).json({
+        message: "먼저 각 영상의 AI 소견을 생성해주세요.",
+      });
+    }
+
+    let prevImg;
+    let recentImg;
+    if (reportSortTime(img1) <= reportSortTime(img2)) {
+      prevImg = img1;
+      recentImg = img2;
+    } else {
+      prevImg = img2;
+      recentImg = img1;
+    }
+
+    const findings1 = String(prevImg.aiReport.findings ?? "");
+    const impression1 = String(prevImg.aiReport.impression ?? "");
+    const findings2 = String(recentImg.aiReport.findings ?? "");
+    const impression2 = String(recentImg.aiReport.impression ?? "");
+
+    const meta1 = formatDateTypeLine(prevImg);
+    const meta2 = formatDateTypeLine(recentImg);
+
+    const userMessage = `이전 영상 소견 (날짜/타입):
+${meta1}
+Findings: ${findings1}
+Impression: ${impression1}
+
+최근 영상 소견 (날짜/타입):
+${meta2}
+Findings: ${findings2}
+Impression: ${impression2}
+
+아래 JSON 형식으로만 응답하세요. 다른 텍스트 절대 포함 금지.
+{
+  "summary": "전반적 변화 요약 2-3문장",
+  "status": "호전" 또는 "악화" 또는 "유지" 또는 "판단불가",
+  "keyChanges": ["변화1", "변화2"],
+  "confidence": 75
+}`;
+
+    const client = new Anthropic({ apiKey });
+    const msg = await client.messages.create({
+      model: VISION_MODEL,
+      max_tokens: 4096,
+      system: COMPARE_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    const textBlocks = msg.content.filter((b) => b.type === "text");
+    const rawText = textBlocks.map((b) => b.text).join("\n").trim();
+    let parsed;
+    try {
+      parsed = parseJsonFromModelText(rawText);
+    } catch {
+      return res.status(502).json({
+        message: "AI 응답을 JSON으로 해석할 수 없습니다.",
+      });
+    }
+
+    const summary = String(parsed.summary ?? "");
+    const statusRaw = String(parsed.status ?? "").trim();
+    const status = COMPARE_STATUS.has(statusRaw) ? statusRaw : "판단불가";
+    let keyChanges = parsed.keyChanges;
+    if (!Array.isArray(keyChanges)) {
+      keyChanges = [];
+    } else {
+      keyChanges = keyChanges.map((x) => String(x));
+    }
+    const confidence = Number(parsed.confidence);
+    if (!Number.isFinite(confidence)) {
+      return res.status(502).json({ message: "AI 응답에 유효한 confidence가 없습니다." });
+    }
+
+    const comparedAt = new Date();
+    res.json({
+      summary,
+      status,
+      keyChanges,
+      confidence,
+      comparedAt,
+    });
+  } catch (err) {
+    console.error(err);
+    const statusCode = err.status === 401 || err.status === 403 ? err.status : 502;
+    res.status(statusCode).json({
+      message:
+        err.status === 401 || err.status === 403
+          ? "Anthropic API 인증에 실패했습니다."
+          : "AI 비교 분석 중 오류가 발생했습니다.",
+    });
+  }
+});
