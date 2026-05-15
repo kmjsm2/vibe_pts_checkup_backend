@@ -1,6 +1,27 @@
+import crypto from "crypto";
 import { Router } from "express";
 import mongoose from "mongoose";
+import multer from "multer";
+import { requireAuth } from "../middleware/auth.js";
 import { Patient } from "../models/Patient.js";
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+function uploadImageSingle(req, res, next) {
+  upload.single("image")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ message: "파일 크기는 10MB를 넘을 수 없습니다." });
+      }
+      return res.status(400).json({ message: err.message });
+    }
+    if (err) return next(err);
+    next();
+  });
+}
 
 export const patientsRouter = Router();
 
@@ -210,6 +231,124 @@ patientsRouter.get("/", async (req, res) => {
       dbTotal,
       limit,
       skip,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+const IMAGE_TYPES = ["xray", "ct", "mri"];
+
+patientsRouter.post(
+  "/:id/images",
+  requireAuth,
+  uploadImageSingle,
+  async (req, res) => {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: "잘못된 환자 ID입니다." });
+    }
+    const imageType = req.body?.imageType;
+    if (!IMAGE_TYPES.includes(imageType)) {
+      return res.status(400).json({
+        message: "imageType은 xray, ct, mri 중 하나여야 합니다.",
+      });
+    }
+    if (!req.file?.buffer) {
+      return res.status(400).json({ message: "image 필드로 파일을 업로드해 주세요." });
+    }
+    const mimeType = String(req.file.mimetype || "").trim();
+    if (!mimeType) {
+      return res.status(400).json({ message: "파일의 MIME 타입을 알 수 없습니다." });
+    }
+
+    const base64 = req.file.buffer.toString("base64");
+    const imageId = crypto.randomUUID();
+    const uploadedAt = new Date();
+
+    try {
+      const patient = await Patient.findByIdAndUpdate(
+        id,
+        {
+          $push: {
+            images: {
+              imageId,
+              imageType,
+              base64,
+              mimeType,
+              uploadedAt,
+            },
+          },
+        },
+        { new: true, runValidators: true }
+      );
+
+      if (!patient) {
+        return res.status(404).json({ message: "환자를 찾을 수 없습니다." });
+      }
+
+      res.status(201).json({ imageId, imageType, uploadedAt });
+    } catch (err) {
+      if (err.name === "ValidationError") {
+        const details = Object.values(err.errors).map((e) => e.message);
+        return res.status(400).json({ message: "입력값을 확인해 주세요.", details });
+      }
+      console.error(err);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  }
+);
+
+patientsRouter.get("/:id/images", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) {
+    return res.status(400).json({ message: "잘못된 환자 ID입니다." });
+  }
+  try {
+    const patient = await Patient.findById(id).select("images").lean();
+    if (!patient) {
+      return res.status(404).json({ message: "환자를 찾을 수 없습니다." });
+    }
+    const images = patient.images ?? [];
+    const list = images.map((img) => ({
+      imageId: img.imageId,
+      imageType: img.imageType,
+      uploadedAt: img.uploadedAt,
+      hasAiReport: Boolean(
+        img.aiReport &&
+          (img.aiReport.analyzedAt != null ||
+            (typeof img.aiReport.findings === "string" && img.aiReport.findings.length > 0))
+      ),
+    }));
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+patientsRouter.get("/:id/images/:imageId", requireAuth, async (req, res) => {
+  const { id, imageId } = req.params;
+  if (!mongoose.isValidObjectId(id)) {
+    return res.status(400).json({ message: "잘못된 환자 ID입니다." });
+  }
+  try {
+    const patient = await Patient.findById(id).select("images").lean();
+    if (!patient) {
+      return res.status(404).json({ message: "환자를 찾을 수 없습니다." });
+    }
+    const img = (patient.images ?? []).find((i) => i.imageId === imageId);
+    if (!img) {
+      return res.status(404).json({ message: "이미지를 찾을 수 없습니다." });
+    }
+    res.json({
+      imageId: img.imageId,
+      imageType: img.imageType,
+      base64: img.base64,
+      mimeType: img.mimeType,
+      uploadedAt: img.uploadedAt,
+      aiReport: img.aiReport ?? null,
     });
   } catch (err) {
     console.error(err);

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import mongoose from "mongoose";
 
 const patientSchema = new mongoose.Schema(
@@ -84,6 +85,26 @@ const patientSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    images: [
+      {
+        imageId: { type: String, default: () => crypto.randomUUID() },
+        imageType: {
+          type: String,
+          enum: ["xray", "ct", "mri"],
+          required: true,
+        },
+        base64: { type: String, required: true },
+        mimeType: { type: String, required: true },
+        uploadedAt: { type: Date, default: Date.now },
+        aiReport: {
+          findings: String,
+          impression: String,
+          recommendation: String,
+          confidence: Number,
+          analyzedAt: Date,
+        },
+      },
+    ],
   },
   { timestamps: true }
 );
